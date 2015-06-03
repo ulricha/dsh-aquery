@@ -15,26 +15,12 @@ module Queries.AQuery.Packets
     , flowStatsWin
     ) where
 
-import qualified Prelude as P
-import Database.DSH
+import           Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.List.NonEmpty as N
+import           Database.DSH
+import qualified Prelude            as P
 
---------------------------------------------------------------------------------
--- Schema definition
-
-data Packet = Packet
-    { p_dest :: Integer
-    , p_len  :: Integer
-    , p_pid  :: Integer
-    , p_src  :: Integer
-    , p_ts   :: Integer
-    }
-
-deriveDSH ''Packet
-deriveTA ''Packet
-generateTableSelectors ''Packet
-
-packets :: Q [Packet]
-packets = table "packets" $ TableHints [ Key ["p_pid"]] NonEmpty
+import           Schema.AQuery
 
 --------------------------------------------------------------------------------
 -- Flow statistics
@@ -57,7 +43,7 @@ deltasSelfJoin xs = cons 0 [ ts - ts'
 -- minimum of the element and its predecessor. If the input is ordered
 -- by timestamps at least in a partitioned way, this will be OK.
 deltasWin :: Q [Integer] -> Q [Integer]
-deltasWin xs = [ ts - minimum [ ts' 
+deltasWin xs = [ ts - minimum [ ts'
                              | (view -> (ts', i')) <- number xs
                              , i' >= i - 1
                              , i' <= i
@@ -66,7 +52,7 @@ deltasWin xs = [ ts - minimum [ ts'
               ]
 
 deltasHead :: Q [Integer] -> Q [Integer]
-deltasHead xs = [ ts - head [ ts' 
+deltasHead xs = [ ts - head [ ts'
                             | (view -> (ts', i')) <- number xs
                             , i' >= i - 1
                             , i' <= i
@@ -77,28 +63,30 @@ deltasHead xs = [ ts - head [ ts'
 sums :: (QA a, Num a) => Q [a] -> Q [a]
 sums as = [ sum [ a' | (view -> (a', i')) <- nas, i' <= i ]
           | let nas = number as
-	  , (view -> (a, i)) <- nas
-	  ]
+          , (view -> (a, i)) <- nas
+          ]
 
 -- | For each packet, compute the ID of the flow that it belongs to
 flowids :: (Q [Integer] -> Q [Integer]) -> Q [Packet] -> Q [Integer]
-flowids deltaFun ps = sums [ if d > 120 then 1 else 0 | d <- deltaFun $ map p_tsQ ps ]
+flowids deltaFun ps = sums [ if d > 120 then 1 else 0
+                           | d <- deltaFun $ map p_tsQ ps
+                           ]
 
 -- | For each flow, compute the number of packets and average length
 -- of packets in the flow. A flow is defined as a number of packets
 -- between the same source and destination in which the time gap
 -- between consecutive packets is smaller than 120ms.
 flowStats :: (Q [Integer] -> Q [Integer]) -> Q [(Integer, Integer, Integer, Double)]
-flowStats deltaFun = 
-    [ tup4 src 
-           dst 
+flowStats deltaFun =
+    [ tup4 src
+           dst
            (length g)
-           (avg $ map (p_lenQ . fst) g)
+           (avg $ map (integerToDouble . p_lenQ . fst) g)
     | (view -> (k, g)) <- flows
     , let (view -> (src, dst, _)) = k
     ]
   where
-    flows = groupWithKey (\p -> tup3 (p_srcQ $ fst p) (p_destQ $ fst p) (snd p)) 
+    flows = groupWithKey (\p -> tup3 (p_srcQ $ fst p) (p_destQ $ fst p) (snd p))
                          $ zip packetsOrdered (flowids deltaFun packetsOrdered)
 
     packetsOrdered = sortWith (\p -> tup3 (p_srcQ p) (p_destQ p) (p_tsQ p)) packets
@@ -108,7 +96,7 @@ flowStats deltaFun =
 Cleaned up for presentation, the query could look like this:
 
 flowStats :: (Q [Integer] -> Q [Integer]) -> Q [(Integer, Integer, Integer, Double)]
-flowStats = 
+flowStats =
     [ (src, dst, length g, avg $ map (p_lenQ . fst) g)
     | ((src, dst, _), g) <- flows
     ]
@@ -136,8 +124,8 @@ type FlowID = Integer
 {-
 -- Assume packets ordered by p_ts
 precedingPacket :: Q [Packet] -> Q [(Packet, [Packet])]
-precedingPacket ps = 
-    [ pair p [ p' 
+precedingPacket ps =
+    [ pair p [ p'
              | (view -> (p', i')) <- number ps
              , p_srcQ p == p_srcQ p'
              , p_destQ p == p_destQ p'
@@ -147,8 +135,8 @@ precedingPacket ps =
     ]
 
 flowids' :: Q [Packet] -> Q [(Packet, FlowID)]
-flowids' ps = 
-  map (\(view -> (a, i)) -> pair (fst a) i) 
+flowids' ps =
+  map (\(view -> (a, i)) -> pair (fst a) i)
   $ sums' [ let diff = p_tsQ p - (min $ map p_tsQ pps)
             in if diff > 120
                then pair p 1
@@ -160,10 +148,10 @@ sums' as p = [ pair a (sum [ p a' | (view -> (a', i')) <- nas, i' <= i ])
              | let nas = number as
              , (view -> (a, i)) <- nas
              ]
-             
+
 flowStats' :: Q [(Integer, Integer, Integer, Double)]
-flowStats' = [ tuple4 src 
-                      dst 
+flowStats' = [ tuple4 src
+                      dst
                       (length g)
                       (avg $ map (p_lenQ . fst) g)
              | (view -> (k, g)) <- flows
@@ -184,7 +172,7 @@ foo pss = map number pss
 {-
 
 partitionHosts :: Q [Packet] -> Q [[Packet]]
-partitionHosts ps = 
+partitionHosts ps =
     [ pair p [ p' | p' <- ps, p_srcQ p == p_srcQ p', p_destQ p == p_destQ p' ]
     | p <- ps
     ]
@@ -193,11 +181,11 @@ mins1 :: (Ord a, QA a) => Q [a] -> Q [a]
 mins1 as = [ minimum [ a' | (view -> (a', i')) <- nas, i' >= i - 1, i' <= i]
            | let nas = number as
 	   , (view -> (a, i)) <- nas
-	   ]   
+	   ]
 
-flowids :: 
+flowids ::
 
-map flowids         -- 
+map flowids         --
 $ map mins1         -- Q [[Integer]]
 $ map (map p_tsQ)   -- Q [[Integer]]
 $ partitionHosts ps -- Q [[Packet]]
@@ -207,7 +195,7 @@ $ partitionHosts ps -- Q [[Packet]]
 
 allPrec :: QA a => Q [a] -> Q [(a, [a])]
 allPrec as = [ pair a [ a' | (view -> (a', i')) <- number as, i' <= i ]
-             | (view -> (a, i) <- number as 
+             | (view -> (a, i) <- number as
              ]
 
 onePrec :: QA a => Q [a] -> Q [(a, [a])]

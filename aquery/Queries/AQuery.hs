@@ -3,37 +3,31 @@ module Queries.AQuery
     ( module Queries.AQuery.Trades
     , module Queries.AQuery.Packets
     , debugAll
-    , getConn
     ) where
 
 import Control.Applicative
 
 import Data.Text
-import Database.HDBC.PostgreSQL
+import Database.HDBC.ODBC
 import Database.DSH.Compiler
 import Database.DSH.Backend.Sql
 
 import Queries.AQuery.Trades
 import Queries.AQuery.Packets
 
-getConn :: IO Connection
-getConn = connectPostgreSQL "user = 'au' password = 'foobar' host = 'localhost' port = '5432' dbname = 'trades'"
+debugAll :: SqlBackend -> IO ()
+debugAll conn = do
+    -- putStrLn "bestProfit"
+    -- debugQ "bestprofit" c $ bestProfit 23 42
 
-debugAll :: IO ()
-debugAll = do
-    c <- sqlBackend <$> getConn
+    -- putStrLn "last10"
+    -- debugQ "last10" c $ last10 42
 
-    putStrLn "bestProfit"
-    debugQ "bestprofit" c $ bestProfit 23 42
+    -- putStrLn "flowStats drop"
+    -- debugQ "flowstats_drop" c $ flowStatsZip
 
-    putStrLn "last10"
-    debugQ "last10" c $ last10 42
-
-    putStrLn "flowStats drop"
-    debugQ "flowstats_drop" c $ flowStatsZip
-
-    putStrLn "flowStats self"
-    debugQ "flowstats_self" c $ flowStatsSelfJoin
+    -- putStrLn "flowStats self"
+    -- debugQ "flowstats_self" c $ flowStatsSelfJoin
 
     putStrLn "flowStats win"
-    debugQ "flowstats_win" c $ flowStatsWin
+    debugQ "flowstats_win" conn $ flowStatsWin

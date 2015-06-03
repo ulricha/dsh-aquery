@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MonadComprehensions   #-}
@@ -14,71 +15,37 @@ module Queries.AQuery.Trades
     , last10
     ) where
 
-import qualified Prelude as P
-import Database.DSH
+import           Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.List.NonEmpty as N
+import           Database.DSH
+import qualified Prelude            as P
 
---------------------------------------------------------------------------------
--- Schema definition
-
-data Trade = Trade
-    { t_amount    :: Double
-    , t_price     :: Double
-    , t_tid       :: Integer
-    , t_timestamp :: Integer
-    , t_tradeDate :: Integer
-    }
-
-deriveDSH ''Trade
-deriveTA ''Trade
-generateTableSelectors ''Trade
-
-data Portfolio = Portfolio
-    { po_pid         :: Integer
-    , po_tid         :: Integer
-    , po_tradedSince :: Integer
-    }
-
-deriveDSH ''Portfolio
-deriveTA ''Portfolio
-generateTableSelectors ''Portfolio
-
-trades :: Q [Trade]
-trades = table "trades" $ TableHints [ Key ["t_tid", "t_timestamp"] ] NonEmpty
-
-portfolios :: Q [Portfolio]
-portfolios = table "portfolio" $ TableHints [Key ["po_pid"] ] NonEmpty
+import           Schema.AQuery
 
 --------------------------------------------------------------------------------
 -- For a given date and stock, compute the best profit obtained by
 -- buying the stock and selling it later.
 
--- | For each list element, compute the minimum of all elements up to
--- the current one.
-mins :: (Ord a, QA a, TA a) => Q [a] -> Q [a]
-mins as = [ minimum [ a' | (view -> (a', i')) <- nas, i' <= i ]
-          | let nas = number as
-          , (view -> (a, i)) <- nas
+mins :: (QA a, TA a, Ord a) => Q [a] -> Q [a]
+mins xs = [ minimum [ y | (view -> (y, j)) <- number xs, j <= i ]
+          | (view -> (x, i)) <- number xs
           ]
 
-{-
+margins :: (Ord a, Num (Q a), QA a, TA a) => Q [a] -> Q [a]
+margins xs = [ x - y | (view -> (x,y)) <- zip xs (mins xs) ]
 
-Being able to write the query using a parallel comprehension would be
-nice:
+-- our profit is the maximum margin obtainable
+profit :: (Ord a, Num a, Num (Q a), QA a, TA a) => Q [a] -> Q a
+profit xs = maximum (margins xs)
 
-maximum [ t_priceQ t - minPrice
-        | t        <- trades'
-        | minPrice <- mins $ map t_priceQ trades'
-        ]
--}
-
+-- best profit obtainable for stock on given date
 bestProfit :: Integer -> Integer -> Q Double
 bestProfit stock date =
-    maximum [ t_priceQ t - minPrice
-            | (view -> (t, minPrice)) <- zip trades' (mins $ map t_priceQ trades')
-            ]
-  where
-    trades' = filter (\t -> t_tidQ t == toQ stock && t_tradeDateQ t == toQ date)
-              $ sortWith t_timestampQ trades
+    profit [ t_priceQ t
+           | t <- sortWith t_timestampQ trades
+           , t_tidQ t == toQ stock
+           , t_tradeDateQ t == toQ date
+           ]
 
 --------------------------------------------------------------------------------
 -- Compute the ten last stocks for each quote in a portfolio.
